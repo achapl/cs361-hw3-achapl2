@@ -153,7 +153,7 @@ void isAndIf(parsed_args parsed_line, pid_t *pid, int*status) {
 	cmd2[index2] = NULL;
 	posix_spawn_file_actions_t actions; /* used in performing spawn operations */
 	posix_spawn_file_actions_init(&actions);
-	if (exec_cmd(cmd1, &actions, pid, status, parsed_line.bg) != -1){
+	if (exec_cmd(cmd1, &actions, pid, status, parsed_line.bg) == 1){
 		exec_cmd(cmd2, &actions, pid, status, parsed_line.bg);
 	}
 }
@@ -443,16 +443,18 @@ int exec_cmd(char** argv, posix_spawn_file_actions_t *actions, pid_t *pid, int *
   // Lab 5 TODO: use posix_spawnp to execute commands
   posix_spawnattr_t attrp;
   posix_spawnattr_init(&attrp);
-  if (posix_spawnp(pid,
+  posix_spawnp(pid,
 				argv[0],		// const char *restrict path,
                 actions,
                 &attrp,		// const posix_spawnattr_t *restrict attrp,
                 argv,		// char *const argv[restrict]
-				environ		/* char *const envp[restrict]*/) != 0) {return -1;}
+				environ		/* char *const envp[restrict]*/);
   // Lab 5 TODO: when posix_spawnp is ready, uncomment me
   if (getpid() != *pid)// if (!bg)
-    if (waitpid(*pid, status, 0) < 0) unix_error("waitfg: waitpid error");
-	
+    if (waitpid(*pid, status, 0) < 0) {unix_error("waitfg: waitpid error");}
+
+  if (*status != 0) {return 0;}
+  
   return 1;
 }
 /* $end exec_cmd */
