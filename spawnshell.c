@@ -24,19 +24,20 @@ typedef struct {
 extern char **environ; /* Defined by libc */
 
 /* Function prototypes */
-void eval(char *cmdline);
+void eval(char *cmdline, int *pid, int *status);
 parsed_args parseline(char *buf);
 int builtin_command(char **argv, pid_t pid, int status);
 void signal_handler(int sig);
 int exec_cmd(char** argv, posix_spawn_file_actions_t *actions, pid_t *pid, int *status, int bg);
 int find_index(char** argv, char* target); 
 
-void isPipe(parsed_args parsed_line);
-void isOutRedir(parsed_args parsed_line);
-void isInRedir(parsed_args parsed_line);
-void isInOutRedir(parsed_args parsed_line);
-void isSeq(parsed_args parsed_line);
-void isAndIf(parsed_args parsed_line);
+void isPipe(parsed_args parsed_line, pid_t *pid, int *status);
+void isOutRedir(parsed_args parsed_line, pid_t *pid, int *status);
+void isInRedir(parsed_args parsed_line, pid_t *pid, int *status);
+void isInOutRedir(parsed_args parsed_line, pid_t *pid, int *status);
+void isSeq(parsed_args parsed_line, pid_t *pid, int *status);
+void isAndIf(parsed_args parsed_line, pid_t *pid, int *status);
+void sigint_handler(int sig);
 
 void unix_error(char *msg) /* Unix-style error */
 {
@@ -44,34 +45,42 @@ void unix_error(char *msg) /* Unix-style error */
   exit(EXIT_FAILURE);
 }
 
+void sigint_handler(int sig) {
+	setbuf(stdin, NULL);
+	setbuf(stdout, NULL);
+	printf("\ncaught sigint\nCS361 >");
+	return;
+}
+
 int main() {
   char cmdline[MAXLINE]; /* Command line */
   /* TODO: register signal handlers */
+	signal(SIGINT, sigint_handler);
+	
+	int pid,
+		status;
+	while (1) {
+		char *result;
+		/* Read */
+		printf("CS361 >"); /* TODO: correct the prompt */
+		result = fgets(cmdline, MAXLINE, stdin);
+		if (result == NULL && ferror(stdin)) {
+			fprintf(stderr, "fatal fgets error\n");
+			exit(EXIT_FAILURE);
+		}
 
-  while (1) {
-    char *result;
-    /* Read */
-    printf(">"); /* TODO: correct the prompt */
-    result = fgets(cmdline, MAXLINE, stdin);
-    if (result == NULL && ferror(stdin)) {
-      fprintf(stderr, "fatal fgets error\n");
-      exit(EXIT_FAILURE);
-    }
+		if (feof(stdin)) exit(EXIT_SUCCESS);
 
-    if (feof(stdin)) exit(EXIT_SUCCESS);
-
-    /* Evaluate */
-    eval(cmdline);
+		/* Evaluate */
+		eval(cmdline, &pid, &status);
   }
 }
 /* $end shellmain */
 
 /* $begin eval */
 /* eval - Evaluate a command line */
-void eval(char *cmdline) {
+void eval(char *cmdline, int *pid, int *status) {
   char buf[MAXLINE];   /* Holds modified command line */
-  pid_t pid;           /* Process id */
-  int status;          /* Process status */
   posix_spawn_file_actions_t actions; /* used in performing spawn operations */
   posix_spawn_file_actions_init(&actions); 
 
@@ -80,48 +89,48 @@ void eval(char *cmdline) {
   if (parsed_line.argv[0] == NULL) return; /* Ignore empty lines */
 
   /* Not a bultin command */
-  if (!builtin_command(parsed_line.argv, pid, status)) {
+  if (!builtin_command(parsed_line.argv, *pid, *status)) {
 	  
 
 	  
     switch (parsed_line.mode) {
     case IS_SIMPLE: /* cmd argv1 argv2 ... */
-        if (!exec_cmd(parsed_line.argv, &actions, &pid, &status, parsed_line.bg)) return;
+        if (!exec_cmd(parsed_line.argv, &actions, pid, status, parsed_line.bg)) return;
         break;
 		
     case IS_PIPE: /* command1 args | command2 args */
-		isPipe(parsed_line);
+		isPipe(parsed_line, pid, status);
         break;
 		
     case IS_OUTPUT_REDIR: /* command args > output_redirection */
-		isOutRedir(parsed_line);
+		isOutRedir(parsed_line, pid, status);
         break;
 		
     case IS_INPUT_REDIR: /* command args < input_redirection */
-		isInRedir(parsed_line);
+		isInRedir(parsed_line, pid, status);
         break;
 		
     case IS_INPUT_OUTPUT_REDIR: /* command args < input_redirection > output_redirection */
-		isInOutRedir(parsed_line);
+		isInOutRedir(parsed_line, pid, status);
         break;
 		
     case IS_SEQ: /* command1 args ; command2 args */
-		isSeq(parsed_line);
+		isSeq(parsed_line, pid, status);
         break;
 		
     case IS_ANDIF: /* command1 args && command2 args */
-		isAndIf(parsed_line);
+		isAndIf(parsed_line, pid, status);
         break;
     }
     if (parsed_line.bg)
-      printf("%d %s", pid, cmdline);
+      printf("%d %s", *pid, cmdline);
     
   }
   posix_spawn_file_actions_destroy(&actions);
   return;
 }
 
-void isAndIf(parsed_args parsed_line) {
+void isAndIf(parsed_args parsed_line, pid_t *pid, int*status) {
 	char* cmd1[100];
 	char* cmd2[100];
 	int index = 0;
@@ -144,14 +153,13 @@ void isAndIf(parsed_args parsed_line) {
 	cmd2[index2] = NULL;
 	posix_spawn_file_actions_t actions; /* used in performing spawn operations */
 	posix_spawn_file_actions_init(&actions);
-	int pid, pid2 = 0, status;
-	if (exec_cmd(cmd1, &actions, &pid, &status, parsed_line.bg) != -1){
-		exec_cmd(cmd2, &actions, &pid2, &status, parsed_line.bg);
+	if (exec_cmd(cmd1, &actions, pid, status, parsed_line.bg) != -1){
+		exec_cmd(cmd2, &actions, pid, status, parsed_line.bg);
 	}
 }
 
 
-void isSeq(parsed_args parsed_line) {
+void isSeq(parsed_args parsed_line, pid_t *pid, int *status) {
 	
 	char* cmd1[100];
 	char* cmd2[100];
@@ -175,13 +183,12 @@ void isSeq(parsed_args parsed_line) {
 	cmd2[index2] = NULL;
 	posix_spawn_file_actions_t actions; /* used in performing spawn operations */
 	posix_spawn_file_actions_init(&actions);
-	int pid, pid2 = 0, status;
-	exec_cmd(cmd1, &actions, &pid, &status, parsed_line.bg);
-	exec_cmd(cmd2, &actions, &pid2, &status, parsed_line.bg);
+	exec_cmd(cmd1, &actions, pid, status, parsed_line.bg);
+	exec_cmd(cmd2, &actions, pid, status, parsed_line.bg);
 }
 
 
-void isInOutRedir(parsed_args parsed_line) {
+void isInOutRedir(parsed_args parsed_line, pid_t *pid, int *status) {
 	char* cmd1[100];
 	char* inFileName;
 	char* outFileName;
@@ -198,9 +205,7 @@ void isInOutRedir(parsed_args parsed_line) {
 	outFileName = parsed_line.argv[index + 2];
 	
 	// Modified FROM LAB
-	int child_status;
 	posix_spawn_file_actions_t actions1;
-	int pid1;
 
 
 	posix_spawn_file_actions_init(&actions1);
@@ -221,7 +226,7 @@ void isInOutRedir(parsed_args parsed_line) {
 	//posix_spawn_file_actions_addclose(&actions1, STDOUT_FILENO/*blank_2*/);
 
 	  // Create the first child process 
-	if (0 != posix_spawnp(&pid1, cmd1[0], &actions1/*blank_5*/, NULL, cmd1, environ)) {
+	if (0 != posix_spawnp(pid, cmd1[0], &actions1/*blank_5*/, NULL, cmd1, environ)) {
 		perror("spawn failed");
 		exit(1);
 	}
@@ -229,14 +234,14 @@ void isInOutRedir(parsed_args parsed_line) {
 	close(fileNum);
 
 	// Close the write end in the parent process
-	close(pid1);
+	close(*pid);
 
 	// Wait for the first child to complete
-	waitpid(pid1, &child_status, 0);
+	waitpid(*pid, status, 0);
 }
 
 
-void isInRedir(parsed_args parsed_line) {
+void isInRedir(parsed_args parsed_line, pid_t *pid, int *status) {
 	
 	char* cmd1[100];
 	char* inFileName;
@@ -252,9 +257,7 @@ void isInRedir(parsed_args parsed_line) {
 	inFileName = parsed_line.argv[index];
 	
 	// Modified FROM LAB
-	int child_status;
 	posix_spawn_file_actions_t actions1;
-	int pid1;
 
 
 	posix_spawn_file_actions_init(&actions1);
@@ -271,7 +274,7 @@ void isInRedir(parsed_args parsed_line) {
 	//posix_spawn_file_actions_addclose(&actions1, STDOUT_FILENO/*blank_2*/);
 
 	  // Create the first child process 
-	if (0 != posix_spawnp(&pid1, cmd1[0], &actions1/*blank_5*/, NULL, cmd1, environ)) {
+	if (0 != posix_spawnp(pid, cmd1[0], &actions1/*blank_5*/, NULL, cmd1, environ)) {
 		perror("spawn failed");
 		exit(1);
 	}
@@ -279,14 +282,14 @@ void isInRedir(parsed_args parsed_line) {
 	close(fileNum);
 
 	// Close the write end in the parent process
-	close(pid1);
+	close(*pid);
 
 	// Wait for the first child to complete
-	waitpid(pid1, &child_status, 0);
+	waitpid(*pid, status, 0);
 }
 
 
-void isOutRedir(parsed_args parsed_line) {
+void isOutRedir(parsed_args parsed_line, pid_t *pid, int *status) {
 	
 	char* cmd1[100];
 	char* outFileName;
@@ -302,9 +305,7 @@ void isOutRedir(parsed_args parsed_line) {
 	outFileName = parsed_line.argv[index];
 	
 	// Modified FROM LAB
-	int child_status;
 	posix_spawn_file_actions_t actions1;
-	int pid1;
 
 
 	
@@ -324,7 +325,7 @@ void isOutRedir(parsed_args parsed_line) {
 	// Add action of closing the read end of the pipe
 
 	  // Create the first child process 
-	if (0 != posix_spawnp(&pid1, cmd1[0], &actions1/*blank_5*/, NULL, cmd1, environ)) {
+	if (0 != posix_spawnp(pid, cmd1[0], &actions1/*blank_5*/, NULL, cmd1, environ)) {
 		perror("spawn failed");
 		exit(1);
 	}
@@ -335,15 +336,15 @@ void isOutRedir(parsed_args parsed_line) {
 	close(fileNum);
 
 	// Close the write end in the parent process
-	close(pid1);
+	close(*pid);
 
 	// Wait for the first child to complete
-	waitpid(pid1, &child_status, 0);
+	waitpid(*pid, status, 0);
 	
 }
 
 
-void isPipe(parsed_args parsed_line) {
+void isPipe(parsed_args parsed_line, pid_t *pid, int *status) {
 	
 	char* cmd1[100];
 	char* cmd2[100];
@@ -367,10 +368,8 @@ void isPipe(parsed_args parsed_line) {
 	
 	
 	// TAKEN FROM LAB
-	int child_status;
 	posix_spawn_file_actions_t actions1, actions2;
 	int pipe_fds[2];
-	int pid1, pid2;
 
 	// Initialize spawn file actions object for both the processes
 	posix_spawn_file_actions_init(&actions1);
@@ -395,13 +394,13 @@ void isPipe(parsed_args parsed_line) {
 	posix_spawn_file_actions_addclose(&actions2, pipe_fds[1]/*blank_4*/);
 
 	  // Create the first child process 
-	if (0 != posix_spawnp(&pid1, cmd1[0], &actions1/*blank_5*/, NULL, cmd1, environ)) {
+	if (0 != posix_spawnp(pid, cmd1[0], &actions1/*blank_5*/, NULL, cmd1, environ)) {
 		perror("spawn failed");
 		exit(1);
 	}
 
 	//Create the second child process
-	if (0 != posix_spawnp(&pid2, cmd2[0], &actions2, NULL, cmd2, environ)) {
+	if (0 != posix_spawnp(pid, cmd2[0], &actions2, NULL, cmd2, environ)) {
 		perror("spawn failed");
 		exit(1);
 	}
@@ -413,10 +412,10 @@ void isPipe(parsed_args parsed_line) {
 	close(pipe_fds[1]);
 
 	// Wait for the first child to complete
-	waitpid(pid1, &child_status, 0);
+	waitpid(*pid, status, 0);
 
 	// Wait for the second child to complete
-	waitpid(pid2, &child_status, 0);
+	waitpid(*pid, status, 0);
 	
 	
 	
@@ -430,7 +429,10 @@ int builtin_command(char **argv, pid_t pid, int status) {
   if (!strcmp(argv[0], "&")) /* Ignore singleton & */
     return 1;
   // TODO: implement special command "?"
-
+	if (!strcmp(argv[0], "?")) {
+		printf("\npid:%d status:%d\n", pid, status);
+		return 1;
+	}
   return 0; /* Not a builtin command */
 }
 /* $end eval */
